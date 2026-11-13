@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import Picklist from './Picklist.vue'
 
 // Values the user has entered (v-model on this component); each one renders as a chip.
@@ -38,15 +38,18 @@ function isValidCode(value) {
 const invalidValues = computed(() => values.value.filter((v) => !isValidCode(v)))
 const hasInvalid = computed(() => invalidValues.value.length > 0)
 
-// The field's message line. It is linked to the input by aria-describedby and
-// sits in an aria-live region, so screen readers hear the instructions on focus
+// The message line under the field. It is linked to the input by
+// aria-describedby and is an aria-live region, so screen readers hear the instructions on focus
 // and hear the error as soon as it appears. The error names the failing values,
 // so it doesn't rely on the red border alone.
 const fieldMessage = computed(() => {
-  if (!hasInvalid.value) return ['Format AA-123-AAA. Press Enter to add each value.']
+  if (!hasInvalid.value) return 'Format AA-123-AAA. Press Enter to add each value.'
   const list = invalidValues.value.join(', ')
-  return [`Values must be in the format AA-123-AAA. Fix or remove: ${list}`]
+  return `Values must be in the format AA-123-AAA. Fix or remove: ${list}`
 })
+
+// Id for the message line, which the input points at with aria-describedby.
+const messageId = useId()
 
 // Screen-reader-only announcement of chips being added or removed.
 const announcement = ref('')
@@ -70,69 +73,82 @@ function addSelections(codes) {
   <!-- Wrapper is the tooltip's activator, so the tooltip anchors to the field. -->
   <div style="max-width: 560px">
     <!--
-      multiple + no items: typing a value and pressing Enter adds it to
-      v-model, and chips/closable-chips render each one as a chip whose
-      X removes it.
+      The Picklist button is a sibling of the combobox, not inside it.
+      Vuetify puts role="combobox" on the .v-field box, so anything in the
+      prepend-inner slot became a child of the combobox, and screen readers
+      such as JAWS treat a combobox's children as part of it rather than as
+      separate controls. Out here it's a plain, standalone button. CSS joins
+      the two so they still look like one control.
     -->
-    <v-combobox
-      v-model="values"
-      v-model:search="search"
-      v-model:focused="focused"
-      class="tall-combobox"
-      label="Enter values"
-      multiple
-      chips
-      closable-chips
-      hide-no-data
-      :messages="fieldMessage"
-      :aria-invalid="hasInvalid ? 'true' : undefined"
+    <div class="combo-row">
+      <v-btn
+        ref="picklistBtn"
+        class="picklist-btn"
+        color="teal-darken-2"
+        variant="flat"
+        @click="openPicklist"
+      >
+        Picklist
+      </v-btn>
+
+      <!--
+        multiple + no items: typing a value and pressing Enter adds it to
+        v-model, and chips/closable-chips render each one as a chip whose
+        X removes it.
+
+        role="": Vuetify puts role="combobox" on both the field box and the
+        input. There is no dropdown list here, so that role is misleading, and
+        on the box it hides the chips' remove buttons from JAWS (children of a
+        combobox aren't exposed as separate controls). An empty role falls
+        back to the native semantics: a plain text input, and real buttons.
+      -->
+      <v-combobox
+        v-model="values"
+        v-model:search="search"
+        v-model:focused="focused"
+        class="tall-combobox"
+        label="Enter values"
+        multiple
+        chips
+        closable-chips
+        hide-no-data
+        hide-details
+        role=""
+        :aria-describedby="messageId"
+        :aria-invalid="hasInvalid ? 'true' : undefined"
+      >
+        <!--
+          props carries the chip's close handler; the combobox supplies its
+          text, size and closable through defaults. Failing values get a red border
+          plus an alert icon, so the state isn't shown by color alone.
+          close-label names the value, so the X button reads "Remove AB-123-CDE"
+          instead of just "Close".
+        -->
+        <template #chip="{ props, item }">
+          <v-chip
+            v-bind="props"
+            :class="{ 'invalid-chip': !isValidCode(item.title) }"
+            :prepend-icon="isValidCode(item.title) ? undefined : 'mdi-alert-circle-outline'"
+            :close-label="`Remove ${item.title}`"
+          />
+        </template>
+
+      </v-combobox>
+    </div>
+
+    <!--
+      Message line, rendered here (not via the combobox's messages) so the
+      Picklist button can match the field's height. Red text only for the
+      error, so the field itself doesn't go into its error state.
+    -->
+    <div
+      :id="messageId"
+      class="combo-message text-caption"
+      :class="{ 'text-error': hasInvalid }"
+      aria-live="polite"
     >
-      <!--
-        props carries the chip's close handler; the combobox supplies its
-        text, size and closable through defaults. Failing values get a red border
-        plus an alert icon, so the state isn't shown by color alone.
-        close-label names the value, so the X button reads "Remove AB-123-CDE"
-        instead of just "Close".
-      -->
-      <template #chip="{ props, item }">
-        <v-chip
-          v-bind="props"
-          :class="{ 'invalid-chip': !isValidCode(item.title) }"
-          :prepend-icon="isValidCode(item.title) ? undefined : 'mdi-alert-circle-outline'"
-          :close-label="`Remove ${item.title}`"
-        />
-      </template>
-
-      <!--
-        messages + this slot shows red text under the field without putting
-        the whole field into its error state, so only bad chips turn red.
-      -->
-      <template #message="{ message }">
-        <span :class="{ 'text-error': hasInvalid }">{{ message }}</span>
-      </template>
-
-      <!--
-        #prepend-inner sits inside the field, before the chips, so the tab
-        order is: Picklist button, each chip's remove button, then the input.
-        .stop keeps a click from also focusing the field or opening its menu.
-        keydown.stop matters for keyboard users: the combobox listens for
-        keydown on the whole field and cancels Enter, which would otherwise
-        stop Enter from pressing this button.
-      -->
-      <template #prepend-inner>
-        <v-btn
-          ref="picklistBtn"
-          class="picklist-btn"
-          color="teal-darken-2"
-          variant="flat"
-          @mousedown.stop
-          @keydown.stop
-          @click.stop="openPicklist"
-        >
-          Picklist
-        </v-btn>
-      </template>
-    </v-combobox>
+      {{ fieldMessage }}
+    </div>
 
     <!-- Controlled by showHint only; hover/focus triggers are turned off. -->
     <v-tooltip
@@ -155,31 +171,32 @@ function addSelections(codes) {
 </template>
 
 <style scoped>
+/* Button and combobox side by side, the button as tall as the field. */
+.combo-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.combo-row .tall-combobox {
+  flex: 1 1 auto;
+}
+
 /* Give the field a taller box; it still grows past this as chips wrap. */
 .tall-combobox :deep(.v-field) {
   min-height: 125px;
-  /*
-   * No left padding, so the Picklist button sits against the left border.
-   * Vuetify adds 12px via .v-field--prepended when a prepend-inner slot is
-   * used, so that has to be zeroed as well as --v-field-padding-start.
-   */
-  --v-field-padding-start: 0px;
-  padding-inline-start: 0;
+  /* Square left corner where it meets the Picklist button. */
+  border-top-left-radius: 0;
 }
 
-/* Stretch the prepend-inner slot to the field's full height... */
-.tall-combobox :deep(.v-field__prepend-inner) {
-  align-items: stretch;
-  padding-top: 0;
-  padding-bottom: 0;
-}
-
-/* ...and let the Picklist button fill it top to bottom. */
-.tall-combobox :deep(.picklist-btn) {
+/* Joined to the field: no gap, rounded only on the outer top-left corner. */
+.picklist-btn {
   height: auto !important;
-  /* Match the field's top-left corner; keep a gap before the chips. */
   border-radius: 4px 0 0 0;
-  margin-inline-end: 8px;
+}
+
+.combo-message {
+  min-height: 20px;
+  padding: 4px 16px 0;
 }
 
 /*
@@ -203,10 +220,6 @@ function addSelections(codes) {
   border: 2px solid rgb(var(--v-theme-error));
 }
 
-/* Messages are dimmed by default; show the error text at full strength. */
-.tall-combobox :deep(.v-messages) {
-  opacity: 1;
-}
 
 /* Hidden visually but still read by screen readers. */
 .sr-only {

@@ -7,9 +7,8 @@ const open = defineModel({ type: Boolean, default: false })
 // Emitted with the checked codes when the user presses Add selections.
 const emit = defineEmits(['add'])
 
-// Ids that tie the dialog to its title and the checkbox group to its instructions.
+// Ties the dialog to its title, which gives the dialog its accessible name.
 const titleId = useId()
-const groupLabelId = useId()
 
 const options = ref([])
 const picked = ref([])
@@ -55,14 +54,14 @@ function addSelections() {
       <v-card-title :id="titleId" tag="h2">Picklist</v-card-title>
 
       <v-card-text class="py-0">
-        <p :id="groupLabelId" class="text-body-2 mb-2">
-          Select one or more codes to add.
-        </p>
         <!--
+          A native fieldset/legend: JAWS announces the legend when focus enters
+          the group, more reliably than role="group" + aria-labelledby.
           Each checkbox shares the picked array: checking one adds its code,
           unchecking removes it. Tab moves through them in order, Space toggles.
         -->
-        <div role="group" :aria-labelledby="groupLabelId">
+        <fieldset class="picklist-group">
+          <legend class="text-body-2 mb-2">Select one or more codes to add.</legend>
           <v-checkbox
             v-for="code in options"
             :key="code"
@@ -73,7 +72,7 @@ function addSelections() {
             density="compact"
             hide-details
           />
-        </div>
+        </fieldset>
       </v-card-text>
 
       <v-card-actions>
@@ -91,3 +90,13 @@ function addSelections() {
     </v-card>
   </v-dialog>
 </template>
+
+<style scoped>
+/* Drop the browser's default fieldset border and padding. */
+.picklist-group {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+</style>

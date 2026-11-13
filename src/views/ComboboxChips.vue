@@ -52,13 +52,14 @@ const codeId = useId()
       <!--
         v-show hides it with display:none, so hidden code is out of the tab
         order. Each <pre> scrolls, so tabindex="0" lets keyboard users focus
-        it and scroll with the arrow keys.
+        it and scroll with the arrow keys. role="region" makes the aria-label
+        count: JAWS ignores aria-label on a plain <pre>.
       -->
       <div v-show="showCode" :id="codeId">
         <h3 class="demo-code-title">ComboWithPicker.vue</h3>
-        <pre class="demo-code" tabindex="0" aria-label="ComboWithPicker.vue source"><code>{{ comboSource }}</code></pre>
+        <pre class="demo-code" role="region" tabindex="0" aria-label="ComboWithPicker.vue source"><code>{{ comboSource }}</code></pre>
         <h3 class="demo-code-title">Picklist.vue</h3>
-        <pre class="demo-code" tabindex="0" aria-label="Picklist.vue source"><code>{{ picklistSource }}</code></pre>
+        <pre class="demo-code" role="region" tabindex="0" aria-label="Picklist.vue source"><code>{{ picklistSource }}</code></pre>
       </div>
     </v-expand-transition>
   </section>

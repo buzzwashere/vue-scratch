@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import Picklist from './Picklist.vue'
 
 // Values the user has entered (v-model on this component); each one renders as a chip.
@@ -15,9 +15,18 @@ const showHint = computed(() => focused.value && !!search.value?.trim())
 // Whether the Picklist dialog is open.
 const dialog = ref(false)
 
+// The Picklist button, so focus can go back to it when the dialog closes.
+const picklistBtn = ref(null)
+
 function openPicklist() {
   dialog.value = true
 }
+
+// The dialog is opened by v-model rather than an activator, so Vuetify has
+// nowhere to return focus. Put it back on the Picklist button ourselves.
+watch(dialog, (open) => {
+  if (!open) nextTick(() => picklistBtn.value?.$el?.focus())
+})
 
 // Every value must look like AB-123-CDE (uppercase letters).
 const CODE_PATTERN = /^[A-Z]{2}-\d{3}-[A-Z]{3}$/
@@ -26,12 +35,29 @@ function isValidCode(value) {
   return CODE_PATTERN.test(String(value))
 }
 
-const hasInvalid = computed(() => values.value.some((v) => !isValidCode(v)))
+const invalidValues = computed(() => values.value.filter((v) => !isValidCode(v)))
+const hasInvalid = computed(() => invalidValues.value.length > 0)
 
-// One message for the whole field, shown only while a value fails.
-const formatMessage = computed(() =>
-  hasInvalid.value ? ['Values must be in the format AA-123-AAA'] : [],
-)
+// The field's message line. It is linked to the input by aria-describedby and
+// sits in an aria-live region, so screen readers hear the instructions on focus
+// and hear the error as soon as it appears. The error names the failing values,
+// so it doesn't rely on the red border alone.
+const fieldMessage = computed(() => {
+  if (!hasInvalid.value) return ['Format AA-123-AAA. Press Enter to add each value.']
+  const list = invalidValues.value.join(', ')
+  return [`Values must be in the format AA-123-AAA. Fix or remove: ${list}`]
+})
+
+// Screen-reader-only announcement of chips being added or removed.
+const announcement = ref('')
+watch(values, (now, before = []) => {
+  const added = now.filter((v) => !before.includes(v))
+  const removed = before.filter((v) => !now.includes(v))
+  const parts = []
+  if (added.length) parts.push(`Added ${added.join(', ')}`)
+  if (removed.length) parts.push(`Removed ${removed.join(', ')}`)
+  if (parts.length) announcement.value = `${parts.join('. ')}. ${now.length} values.`
+})
 
 // Add the codes picked in the dialog as chips, skipping any already in the field.
 function addSelections(codes) {
@@ -58,16 +84,22 @@ function addSelections(codes) {
       chips
       closable-chips
       hide-no-data
-      :messages="formatMessage"
+      :messages="fieldMessage"
+      :aria-invalid="hasInvalid ? 'true' : undefined"
     >
       <!--
         props carries the chip's close handler; the combobox supplies its
-        text, size and closable through defaults. Failing values get a red border.
+        text, size and closable through defaults. Failing values get a red border
+        plus an alert icon, so the state isn't shown by color alone.
+        close-label names the value, so the X button reads "Remove AB-123-CDE"
+        instead of just "Close".
       -->
       <template #chip="{ props, item }">
         <v-chip
           v-bind="props"
           :class="{ 'invalid-chip': !isValidCode(item.title) }"
+          :prepend-icon="isValidCode(item.title) ? undefined : 'mdi-alert-circle-outline'"
+          :close-label="`Remove ${item.title}`"
         />
       </template>
 
@@ -76,19 +108,25 @@ function addSelections(codes) {
         the whole field into its error state, so only bad chips turn red.
       -->
       <template #message="{ message }">
-        <span class="text-error">{{ message }}</span>
+        <span :class="{ 'text-error': hasInvalid }">{{ message }}</span>
       </template>
 
       <!--
-        #prepend-inner sits inside the field, before the chips. .stop keeps
-        the click from also focusing the field or opening its menu.
+        #prepend-inner sits inside the field, before the chips, so the tab
+        order is: Picklist button, each chip's remove button, then the input.
+        .stop keeps a click from also focusing the field or opening its menu.
+        keydown.stop matters for keyboard users: the combobox listens for
+        keydown on the whole field and cancels Enter, which would otherwise
+        stop Enter from pressing this button.
       -->
       <template #prepend-inner>
         <v-btn
+          ref="picklistBtn"
           class="picklist-btn"
-          color="teal"
+          color="teal-darken-2"
           variant="flat"
           @mousedown.stop
+          @keydown.stop
           @click.stop="openPicklist"
         >
           Picklist
@@ -111,6 +149,9 @@ function addSelections(codes) {
 
 
   <Picklist v-model="dialog" @add="addSelections" />
+
+  <!-- Polite live region for add/remove announcements; visually hidden. -->
+  <div class="sr-only" aria-live="polite" aria-atomic="true">{{ announcement }}</div>
 </template>
 
 <style scoped>
@@ -165,5 +206,18 @@ function addSelections(codes) {
 /* Messages are dimmed by default; show the error text at full strength. */
 .tall-combobox :deep(.v-messages) {
   opacity: 1;
+}
+
+/* Hidden visually but still read by screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 </style>

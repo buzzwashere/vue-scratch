@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, useId } from 'vue'
 import ComboWithPicker from '../components/ComboWithPicker.vue'
 // ?raw makes Vite import the file's source text, so the code shown here
 // always matches the component.
@@ -8,24 +8,32 @@ import picklistSource from '../components/Picklist.vue?raw'
 
 const values = ref([])
 const showCode = ref(false)
+
+const headingId = useId()
+const codeId = useId()
 </script>
 
 <template>
   <h1 class="text-h5 mb-4">Combobox chips</h1>
 
-  <div class="demo-panel">
+  <!-- A labelled section, so it shows up as a named region. -->
+  <section class="demo-panel" :aria-labelledby="headingId">
     <header class="demo-header">
-      <span class="text-subtitle-1 font-weight-medium">Combo with Picker</span>
+      <h2 :id="headingId" class="text-subtitle-1 font-weight-medium">Combo with Picker</h2>
       <v-spacer />
-      <!-- Toggles the source view below the component. -->
-      <!-- Outlined when closed, filled while the code is showing. -->
+      <!--
+        Toggles the source view below the component. Outlined when closed,
+        filled while open. aria-expanded/aria-controls tell screen readers
+        what it toggles and whether it's open.
+      -->
       <v-btn
         :variant="showCode ? 'flat' : 'outlined'"
         color="primary"
         size="small"
         class="font-monospace"
-        :aria-expanded="showCode"
-        aria-label="Show code"
+        :aria-expanded="showCode ? 'true' : 'false'"
+        :aria-controls="codeId"
+        :aria-label="showCode ? 'Hide code' : 'Show code'"
         @click="showCode = !showCode"
       >
         &lt;&gt;
@@ -41,14 +49,19 @@ const showCode = ref(false)
     </div>
 
     <v-expand-transition>
-      <div v-show="showCode">
-        <div class="demo-code-title">ComboWithPicker.vue</div>
-        <pre class="demo-code"><code>{{ comboSource }}</code></pre>
-        <div class="demo-code-title">Picklist.vue</div>
-        <pre class="demo-code"><code>{{ picklistSource }}</code></pre>
+      <!--
+        v-show hides it with display:none, so hidden code is out of the tab
+        order. Each <pre> scrolls, so tabindex="0" lets keyboard users focus
+        it and scroll with the arrow keys.
+      -->
+      <div v-show="showCode" :id="codeId">
+        <h3 class="demo-code-title">ComboWithPicker.vue</h3>
+        <pre class="demo-code" tabindex="0" aria-label="ComboWithPicker.vue source"><code>{{ comboSource }}</code></pre>
+        <h3 class="demo-code-title">Picklist.vue</h3>
+        <pre class="demo-code" tabindex="0" aria-label="Picklist.vue source"><code>{{ picklistSource }}</code></pre>
       </div>
     </v-expand-transition>
-  </div>
+  </section>
 </template>
 
 <style scoped>
@@ -84,5 +97,11 @@ const showCode = ref(false)
   line-height: 1.5;
   border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   background: rgba(var(--v-theme-on-surface), 0.04);
+}
+
+/* Visible focus ring on the scrollable code blocks. */
+.demo-code:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: -2px;
 }
 </style>

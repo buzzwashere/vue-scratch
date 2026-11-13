@@ -1,11 +1,15 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, useId, watch } from 'vue'
 
 // v-model controls whether the dialog is open.
 const open = defineModel({ type: Boolean, default: false })
 
 // Emitted with the checked codes when the user presses Add selections.
 const emit = defineEmits(['add'])
+
+// Ids that tie the dialog to its title and the checkbox group to its instructions.
+const titleId = useId()
+const groupLabelId = useId()
 
 const options = ref([])
 const picked = ref([])
@@ -38,23 +42,38 @@ function addSelections() {
 </script>
 
 <template>
-  <v-dialog v-model="open" max-width="400">
-    <v-card title="Picklist">
-      <!--
-        Each checkbox shares the picked array: checking one adds its code,
-        unchecking removes it.
-      -->
+  <!--
+    v-dialog gives role="dialog", aria-modal and a focus trap; Escape closes it.
+    aria-labelledby gives the dialog its accessible name from the title.
+  -->
+  <v-dialog
+    v-model="open"
+    max-width="400"
+    :content-props="{ 'aria-labelledby': titleId }"
+  >
+    <v-card>
+      <v-card-title :id="titleId" tag="h2">Picklist</v-card-title>
+
       <v-card-text class="py-0">
-        <v-checkbox
-          v-for="code in options"
-          :key="code"
-          v-model="picked"
-          :value="code"
-          :label="code"
-          class="font-monospace"
-          density="compact"
-          hide-details
-        />
+        <p :id="groupLabelId" class="text-body-2 mb-2">
+          Select one or more codes to add.
+        </p>
+        <!--
+          Each checkbox shares the picked array: checking one adds its code,
+          unchecking removes it. Tab moves through them in order, Space toggles.
+        -->
+        <div role="group" :aria-labelledby="groupLabelId">
+          <v-checkbox
+            v-for="code in options"
+            :key="code"
+            v-model="picked"
+            :value="code"
+            :label="code"
+            class="font-monospace"
+            density="compact"
+            hide-details
+          />
+        </div>
       </v-card-text>
 
       <v-card-actions>

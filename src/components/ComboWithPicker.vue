@@ -45,7 +45,7 @@ const hasInvalid = computed(() => invalidValues.value.length > 0)
 const fieldMessage = computed(() => {
   if (!hasInvalid.value) return 'Format AA-123-AAA. Press Enter to add each value.'
   const list = invalidValues.value.join(', ')
-  return `Values must be in the format AA-123-AAA. Fix or remove: ${list}`
+  return `Values must be in the format AA-123-AAA. Edit or remove: ${list}`
 })
 
 // Id for the message line, which the input points at with aria-describedby.
@@ -60,6 +60,48 @@ watch(values, (now, before = []) => {
   if (added.length) parts.push(`Added ${added.join(', ')}`)
   if (removed.length) parts.push(`Removed ${removed.join(', ')}`)
   if (parts.length) announcement.value = `${parts.join('. ')}. ${now.length} values.`
+})
+
+// ----- Editing a failing chip -----
+// The combobox, so the input can be focused after a chip is pulled back into it.
+const comboRef = ref(null)
+
+// Where the chip being edited sat, so the fixed value goes back in the same spot.
+const editIndex = ref(null)
+
+// Pull a failing chip back into the input: remove the chip, put its text in
+// the input, focus it and select the text. Enter (or leaving the field) turns
+// it back into a chip.
+function editChip(index) {
+  const value = values.value[index]
+  editIndex.value = index
+  values.value = values.value.filter((_, i) => i !== index)
+  search.value = String(value)
+  nextTick(() => {
+    const input = comboRef.value?.$el?.querySelector('input')
+    input?.focus()
+    input?.select()
+    // Runs after the add/remove watcher, so this replaces its "Removed …".
+    announcement.value = `Editing ${value}. Press Enter to save.`
+  })
+}
+
+// v-model handler for the combobox. When a value is added while editing,
+// move it from the end back to where the edited chip was.
+function onValuesUpdate(next) {
+  if (editIndex.value !== null && next.length === values.value.length + 1) {
+    const updated = next.slice(0, -1)
+    updated.splice(Math.min(editIndex.value, updated.length), 0, next[next.length - 1])
+    editIndex.value = null
+    values.value = updated
+    return
+  }
+  values.value = next
+}
+
+// If the edit text is cleared, there's nothing to put back.
+watch(search, (text) => {
+  if (!text) editIndex.value = null
 })
 
 // Add the codes picked in the dialog as chips, skipping any already in the field.
@@ -103,7 +145,9 @@ function addSelections(codes) {
         back to the native semantics: a plain text input, and real buttons.
       -->
       <v-combobox
-        v-model="values"
+        ref="comboRef"
+        :model-value="values"
+        @update:model-value="onValuesUpdate"
         v-model:search="search"
         v-model:focused="focused"
         class="tall-combobox"
@@ -123,14 +167,31 @@ function addSelections(codes) {
           plus an alert icon, so the state isn't shown by color alone.
           close-label names the value, so the X button reads "Remove AB-123-CDE"
           instead of just "Close".
+
+          Failing chips also get a pencil button, "Edit AB-12", that pulls the
+          value back into the input. keydown.stop is needed because the chip
+          treats Enter/Space on anything inside it as "remove this chip".
         -->
-        <template #chip="{ props, item }">
+        <template #chip="{ props, item, index }">
           <v-chip
             v-bind="props"
             :class="{ 'invalid-chip': !isValidCode(item.title) }"
             :prepend-icon="isValidCode(item.title) ? undefined : 'mdi-alert-circle-outline'"
             :close-label="`Remove ${item.title}`"
-          />
+          >
+            <template v-if="!isValidCode(item.title)" #append>
+              <button
+                type="button"
+                class="chip-edit-btn"
+                :aria-label="`Edit ${item.title}`"
+                :title="`Edit ${item.title}`"
+                @keydown.stop
+                @click.stop="editChip(index)"
+              >
+                <v-icon icon="mdi-pencil" size="x-small" />
+              </button>
+            </template>
+          </v-chip>
         </template>
 
       </v-combobox>
@@ -232,5 +293,25 @@ function addSelections(codes) {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* Pencil button on failing chips, sized like the chip's close button. */
+.chip-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-inline-start: 4px;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+}
+
+.chip-edit-btn:hover {
+  background: rgba(var(--v-theme-on-surface), 0.08);
+}
+
+.chip-edit-btn:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 1px;
 }
 </style>

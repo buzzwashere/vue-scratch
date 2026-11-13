@@ -18,10 +18,12 @@ const showCode = ref(false)
       <span class="text-subtitle-1 font-weight-medium">Combo with Picker</span>
       <v-spacer />
       <!-- Toggles the source view below the component. -->
+      <!-- Outlined when closed, filled while the code is showing. -->
       <v-btn
-        variant="text"
+        :variant="showCode ? 'flat' : 'outlined'"
+        color="primary"
         size="small"
-        :active="showCode"
+        class="font-monospace"
         :aria-expanded="showCode"
         aria-label="Show code"
         @click="showCode = !showCode"
@@ -61,6 +63,9 @@ const showCode = ref(false)
   align-items: center;
   padding: 4px 8px 4px 16px;
   border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  /* Light grey; follows the theme, so it stays subtle in dark mode too. */
+  background: rgba(var(--v-theme-on-surface), 0.05);
+  border-radius: 4px 4px 0 0;
 }
 
 .demo-code-title {

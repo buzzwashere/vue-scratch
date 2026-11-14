@@ -73,14 +73,21 @@ const draft = ref('')
 // Set when Escape cancels, so the blur that follows doesn't save.
 let cancelling = false
 
-// Turn the chip's text into an input, focused with the text selected.
-function startEdit(index) {
+// Turn the chip's text into an input and focus it. selectAll selects the
+// whole value (used when Tab lands on the chip); otherwise the caret goes
+// to the end, so typing fixes rather than replaces.
+function startEdit(index, { selectAll = false } = {}) {
   editingIndex.value = index
   draft.value = String(values.value[index])
   nextTick(() => {
     const input = comboRef.value?.$el?.querySelector('.chip-edit-input')
     input?.focus()
-    input?.select()
+    if (selectAll) {
+      input?.select()
+    } else {
+      const end = input?.value.length ?? 0
+      input?.setSelectionRange(end, end)
+    }
   })
 }
 
@@ -116,6 +123,22 @@ function cancelEdit() {
 // After Enter or Escape, put focus back in the main input.
 function focusMainInput() {
   nextTick(() => comboRef.value?.$el?.querySelector('input:not(.chip-edit-input)')?.focus())
+}
+
+// Tabbing onto a failing chip's text goes straight into editing with the
+// value selected. A mouse press also focuses the button, so it's flagged
+// and left to the click handler (caret at the end) instead.
+let pointerDown = false
+
+function onChipTextFocus(index) {
+  if (pointerDown) return
+  startEdit(index, { selectAll: true })
+}
+
+function onChipTextMousedown() {
+  pointerDown = true
+  // Cleared after the click (or if the press is dragged off the button).
+  setTimeout(() => (pointerDown = false), 500)
 }
 
 // Keys on a failing chip's text button. Handled directly rather than relying
@@ -234,8 +257,9 @@ function addSelections(codes) {
           instead of just "Close".
 
           Failing chips can be edited in place: their text is a button
-          ("Edit AB-12") that swaps to an input inside the chip; click it, or
-          Enter/Space/F2 on it. From the main input, Left/Right arrow onto a
+          ("Edit AB-12") that swaps to an input inside the chip. Tabbing onto it
+          starts editing with the value selected; clicking it, or Enter/Space/F2,
+          also starts editing. From the main input, Left/Right arrow onto a
           failing chip and press Enter or F2, or press F2 to edit the first
           failing chip. Enter or
           leaving the input saves, Escape cancels. The input and button stop
@@ -266,10 +290,12 @@ function addSelections(codes) {
               v-else-if="!isValidCode(item.title)"
               type="button"
               class="chip-text-btn"
+              tabindex="0"
               :aria-label="`Edit ${item.title}, not in the format AA-123-AAA`"
               title="Click to edit"
               @keydown.stop="onChipTextKeydown($event, index)"
-              @mousedown.stop
+              @focus="onChipTextFocus(index)"
+              @mousedown.stop="onChipTextMousedown"
               @click.stop="startEdit(index)"
             >
               {{ item.title }}

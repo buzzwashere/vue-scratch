@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
+import ComboboxChips from '../views/ComboboxChips.vue'
 
 // Routes with meta.title are listed on the home page directory, in this order.
 const router = createRouter({
@@ -58,8 +59,10 @@ const router = createRouter({
     {
       path: '/combobox-chips',
       name: 'combobox-chips',
-      component: () => import('../views/ComboboxChips.vue'),
+      component: ComboboxChips,
       meta: {
+        // Full-width page, so the code column has room beside the demo.
+        wide: true,
         title: 'Combobox chips',
         description: 'v-combobox that turns entered values into chips on Enter, with a typing hint and a Picklist dialog',
       },

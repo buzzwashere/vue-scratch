@@ -43,12 +43,14 @@ function addSelections() {
 <template>
   <!--
     v-dialog gives role="dialog", aria-modal and a focus trap; Escape closes it.
-    aria-labelledby gives the dialog its accessible name from the title.
+    aria-labelledby gives the dialog its accessible name from the title. It
+    goes on v-dialog itself, which renders the element with role="dialog";
+    content-props would put it on an inner div and leave the dialog unnamed.
   -->
   <v-dialog
     v-model="open"
     max-width="400"
-    :content-props="{ 'aria-labelledby': titleId }"
+    :aria-labelledby="titleId"
   >
     <v-card>
       <v-card-title :id="titleId" tag="h2">Picklist</v-card-title>

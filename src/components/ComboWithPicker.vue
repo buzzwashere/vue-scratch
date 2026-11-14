@@ -1,16 +1,19 @@
 <script setup>
-import { computed, nextTick, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import Picklist from './Picklist.vue'
 
 // Values the user has entered (v-model on this component); each one renders as a chip.
 const values = defineModel({ type: Array, default: () => [] })
 
-// Text currently typed in the field (not yet a chip).
-const search = ref('')
-const focused = ref(false)
-
-// Show the hint only while the user is typing something in the field.
-const showHint = computed(() => focused.value && !!search.value?.trim())
+// Where the Picklist button goes: 'start' = left of the field, full height;
+// 'top' = above the field, full width.
+defineProps({
+  buttonPosition: {
+    type: String,
+    default: 'start',
+    validator: (v) => ['start', 'top'].includes(v),
+  },
+})
 
 // Whether the Picklist dialog is open.
 const dialog = ref(false)
@@ -22,10 +25,58 @@ function openPicklist() {
   dialog.value = true
 }
 
+// ----- Uppercase as you type -----
+// Uppercase an input's text in place, keeping the caret where it was
+// (replacing the value would otherwise jump it to the end). Returns the text.
+function uppercaseInPlace(el) {
+  const upper = el.value.toUpperCase()
+  if (upper !== el.value) {
+    const { selectionStart, selectionEnd } = el
+    el.value = upper
+    el.setSelectionRange(selectionStart, selectionEnd)
+  }
+  return upper
+}
+
+// Main input: Vuetify reports each change of the typed text through
+// update:search. v-combobox keeps that text internally (it ignores a :search
+// prop), so write the uppercase version back through its exposed `search`,
+// then put the caret back where it was, since rewriting the input's value
+// moves the caret to the end.
+function onSearchUpdate(text) {
+  const raw = text ?? ''
+  if (raw) duplicateNotice.value = ''
+  const upper = raw.toUpperCase()
+  if (upper === raw || !comboRef.value) return
+  const el = comboRef.value.$el?.querySelector('input:not(.chip-edit-input)')
+  const start = el?.selectionStart
+  const end = el?.selectionEnd
+  comboRef.value.search = upper
+  nextTick(() => {
+    if (el && document.activeElement === el && start != null) el.setSelectionRange(start, end)
+  })
+}
+
+// Inline chip editor.
+function onEditInput(e) {
+  draft.value = uppercaseInPlace(e.target)
+}
+
+// Set by addSelections so the close handler knows codes were just added.
+let addedFromPicklist = false
+
 // The dialog is opened by v-model rather than an activator, so Vuetify has
-// nowhere to return focus. Put it back on the Picklist button ourselves.
+// nowhere to return focus; we choose. After Add selections the caret goes in
+// the main input (it sits after the last chip) so the user can keep typing;
+// after Cancel/Escape focus goes back to the Picklist button.
 watch(dialog, (open) => {
-  if (!open) nextTick(() => picklistBtn.value?.$el?.focus())
+  if (open) return
+  const toInput = addedFromPicklist
+  addedFromPicklist = false
+  nextTick(() => {
+    if (toInput) focusMainInput()
+    else picklistBtn.value?.$el?.focus()
+  })
 })
 
 // Every value must look like AB-123-CDE (uppercase letters).
@@ -43,10 +94,41 @@ const hasInvalid = computed(() => invalidValues.value.length > 0)
 // and hear the error as soon as it appears. The error names the failing values,
 // so it doesn't rely on the red border alone.
 const fieldMessage = computed(() => {
-  if (!hasInvalid.value) return 'Format AA-123-AAA. Press Enter to add each value.'
+  if (duplicateNotice.value) return duplicateNotice.value
+  if (!hasInvalid.value) return 'Format AA-999-AAA. Press Enter to add each value.'
   const list = invalidValues.value.join(', ')
-  return `Values must be in the format AA-123-AAA. Press F2 to edit, or remove: ${list}`
+  return `Values must be in the format AA-999-AAA. Select a value to edit it, or remove it: ${list}`
 })
+
+// ----- No duplicate chips -----
+// Shown in the message line (so sighted users see why nothing was added, and
+// the live region reads it) until the user next types or the values change.
+const duplicateNotice = ref('')
+
+function showDuplicates(dupes) {
+  if (!dupes.length) return
+  const list = [...new Set(dupes)].join(', ')
+  duplicateNotice.value =
+    dupes.length === 1 ? `${list} is already added.` : `Already added, skipped: ${list}.`
+}
+
+watch(values, () => (duplicateNotice.value = ''))
+
+// Enter in the main input with a value that's already a chip. Vuetify would
+// "re-select" it, which moves the existing chip to the end, so catch Enter
+// first (capture phase on the wrapper, before Vuetify's own handler), leave
+// the chips alone, clear the typed text and say why.
+function onRowKeydownCapture(e) {
+  if (e.key !== 'Enter' || editingIndex.value !== null) return
+  if (!e.target.matches?.('input:not(.chip-edit-input)')) return
+  if ((comboRef.value?.selectionIndex ?? -1) >= 0) return
+  const text = String(comboRef.value?.search ?? '').trim().toUpperCase()
+  if (!text || !values.value.includes(text)) return
+  e.preventDefault()
+  e.stopPropagation()
+  comboRef.value.search = ''
+  showDuplicates([text])
+}
 
 // Id for the message line, which the input points at with aria-describedby.
 const messageId = useId()
@@ -66,6 +148,29 @@ watch(values, (now, before = []) => {
 // The combobox component: used to find the inputs inside it and to read
 // which chip the arrow keys have highlighted (selectionIndex).
 const comboRef = ref(null)
+
+// v-combobox adds dropdown ARIA (aria-haspopup, aria-expanded, aria-controls,
+// aria-owns) to the field box and input. With role="" there is no dropdown,
+// so JAWS would announce a plain edit box as "collapsed" / "has popup".
+// Vuetify re-applies them on every render, so strip them whenever they appear.
+const MENU_ARIA = ['aria-haspopup', 'aria-expanded', 'aria-controls', 'aria-owns']
+let ariaObserver
+
+function stripMenuAria(root) {
+  root.querySelectorAll('.v-field, input:not(.chip-edit-input)').forEach((el) => {
+    MENU_ARIA.forEach((name) => el.hasAttribute(name) && el.removeAttribute(name))
+  })
+}
+
+onMounted(() => {
+  const root = comboRef.value?.$el
+  if (!root) return
+  stripMenuAria(root)
+  ariaObserver = new MutationObserver(() => stripMenuAria(root))
+  ariaObserver.observe(root, { subtree: true, attributes: true, attributeFilter: MENU_ARIA })
+})
+
+onBeforeUnmount(() => ariaObserver?.disconnect())
 
 // Index of the chip being edited (null when none) and the text being typed.
 const editingIndex = ref(null)
@@ -108,22 +213,25 @@ function commitEdit(e) {
   const chipEl = e?.target?.closest?.('.v-combobox__selection')
   const focusStayedInChip = !!chipEl && chipEl.contains(e.relatedTarget)
   const next = [...values.value]
-  if (text) next.splice(index, 1, text)
+  // Edited into a value that another chip already has: drop this chip.
+  const duplicate = !!text && next.some((v, i) => i !== index && v === text)
+  if (text && !duplicate) next.splice(index, 1, text)
   else next.splice(index, 1)
   values.value = next
   nextTick(() => {
     if (focusStayedInChip) {
       const chips = comboRef.value?.$el?.querySelectorAll('.v-combobox__selection') ?? []
       // Same chip's X, or (if the chip was removed) the next chip's first control.
-      const target = text
+      const target = text && !duplicate
         ? chips[index]?.querySelector('.v-chip__close')
         : chips[index]?.querySelector('button')
       if (target) target.focus()
       else focusMainInput()
     }
-    if (!text) announcement.value = 'Value removed.'
+    if (duplicate) showDuplicates([text])
+    else if (!text) announcement.value = 'Value removed.'
     else if (isValidCode(text)) announcement.value = `Saved ${text}.`
-    else announcement.value = `Saved ${text}. Still not in the format AA-123-AAA.`
+    else announcement.value = `Saved ${text}. Still not in the format AA-999-AAA.`
   })
 }
 
@@ -158,9 +266,9 @@ function onChipTextMousedown() {
 
 // Keys on a failing chip's text button. Handled directly rather than relying
 // on the browser turning Enter/Space into a click, so nothing upstream can
-// swallow it. F2 is the usual "edit this" key.
+// swallow it.
 function onChipTextKeydown(e, index) {
-  if (['Enter', ' ', 'F2'].includes(e.key)) {
+  if (['Enter', ' '].includes(e.key)) {
     e.preventDefault()
     startEdit(index)
   }
@@ -168,16 +276,13 @@ function onChipTextKeydown(e, index) {
 
 // Keys in the main input. The combobox lets you move onto chips with the
 // Left/Right arrows (Backspace/Delete then removes the highlighted one).
-// Add: Enter or F2 on a highlighted failing chip edits it, and F2 with no
-// chip highlighted edits the first failing chip.
+// Add: Enter on a highlighted failing chip edits it.
 function onComboKeydown(e) {
   if (editingIndex.value !== null) return
   const selected = comboRef.value?.selectionIndex ?? -1
-  const isEditKey = e.key === 'F2' || (e.key === 'Enter' && selected > -1)
-  if (!isEditKey) return
-  let index = selected
-  if (index < 0) index = values.value.findIndex((v) => !isValidCode(v))
-  if (index < 0 || isValidCode(values.value[index])) return
+  if (e.key !== 'Enter' || selected < 0) return
+  const index = selected
+  if (isValidCode(values.value[index])) return
   e.preventDefault()
   startEdit(index)
 }
@@ -191,7 +296,7 @@ watch(
     if (value === undefined) return
     announcement.value = isValidCode(value)
       ? `${value}. Press Delete to remove.`
-      : `${value}, not in the format AA-123-AAA. Press Enter or F2 to edit, Delete to remove.`
+      : `${value}, not in the format AA-999-AAA. Press Enter to edit, Delete to remove.`
   },
 )
 
@@ -209,8 +314,12 @@ function onEditKeydown(e) {
 
 // Add the codes picked in the dialog as chips, skipping any already in the field.
 function addSelections(codes) {
-  const toAdd = codes.filter((code) => !values.value.includes(code))
-  values.value = [...values.value, ...toAdd]
+  const toAdd = [...new Set(codes)].filter((code) => !values.value.includes(code))
+  const skipped = codes.filter((code) => values.value.includes(code))
+  if (toAdd.length) values.value = [...values.value, ...toAdd]
+  // After the values watcher has cleared any old notice.
+  nextTick(() => showDuplicates(skipped))
+  addedFromPicklist = true
 }
 
 // For parent components: jump to the first failing chip, in edit mode with
@@ -231,8 +340,7 @@ defineExpose({ focusFirstError })
 </script>
 
 <template>
-  <!-- Wrapper is the tooltip's activator, so the tooltip anchors to the field. -->
-  <div style="max-width: 560px">
+  <div style="max-width: 560px; margin-inline: auto">
     <!--
       The Picklist button is a sibling of the combobox, not inside it.
       Vuetify puts role="combobox" on the .v-field box, so anything in the
@@ -241,7 +349,11 @@ defineExpose({ focusFirstError })
       separate controls. Out here it's a plain, standalone button. CSS joins
       the two so they still look like one control.
     -->
-    <div class="combo-row">
+    <div
+      class="combo-row"
+      :class="{ 'combo-row--top': buttonPosition === 'top' }"
+      @keydown.capture="onRowKeydownCapture"
+    >
       <v-btn
         ref="picklistBtn"
         class="picklist-btn"
@@ -249,7 +361,7 @@ defineExpose({ focusFirstError })
         variant="flat"
         @click="openPicklist"
       >
-        Picklist
+        Select from Picklist
       </v-btn>
 
       <!--
@@ -267,10 +379,9 @@ defineExpose({ focusFirstError })
         ref="comboRef"
         v-model="values"
         @keydown="onComboKeydown"
-        v-model:search="search"
-        v-model:focused="focused"
+        @update:search="onSearchUpdate"
         class="tall-combobox"
-        label="Enter values"
+        label="... or Enter Values"
         multiple
         chips
         closable-chips
@@ -289,10 +400,9 @@ defineExpose({ focusFirstError })
 
           Failing chips can be edited in place: their text is a button
           ("Edit AB-12") that swaps to an input inside the chip. Tabbing onto it
-          starts editing with the value selected; clicking it, or Enter/Space/F2,
+          starts editing with the value selected; clicking it, or Enter/Space,
           also starts editing. From the main input, Left/Right arrow onto a
-          failing chip and press Enter or F2, or press F2 to edit the first
-          failing chip. Enter or
+          failing chip and press Enter. Enter or
           leaving the input saves, Escape cancels. The input and button stop
           keydown/mousedown/click from bubbling, because the chip treats
           Enter/Space as "remove this chip" and the combobox field reacts to
@@ -307,7 +417,8 @@ defineExpose({ focusFirstError })
           >
             <input
               v-if="editingIndex === index"
-              v-model="draft"
+              :value="draft"
+              @input="onEditInput"
               class="chip-edit-input"
               :size="Math.max(draft.length, 10)"
               :aria-label="`Edit value ${item.title}`"
@@ -322,7 +433,7 @@ defineExpose({ focusFirstError })
               type="button"
               class="chip-text-btn"
               tabindex="0"
-              :aria-label="`Edit ${item.title}, not in the format AA-123-AAA`"
+              :aria-label="`Edit ${item.title}, not in the format AA-999-AAA`"
               title="Click to edit"
               @keydown.stop="onChipTextKeydown($event, index)"
               @focus="onChipTextFocus(index)"
@@ -351,18 +462,6 @@ defineExpose({ focusFirstError })
     >
       {{ fieldMessage }}
     </div>
-
-    <!-- Controlled by showHint only; hover/focus triggers are turned off. -->
-    <v-tooltip
-      :model-value="showHint"
-      activator="parent"
-      location="top"
-      :open-on-hover="false"
-      :open-on-focus="false"
-      :open-on-click="false"
-    >
-      Press Enter to complete value
-    </v-tooltip>
   </div>
 
 
@@ -386,14 +485,48 @@ defineExpose({ focusFirstError })
 /* Give the field a taller box; it still grows past this as chips wrap. */
 .tall-combobox :deep(.v-field) {
   min-height: 125px;
-  /* Square left corner where it meets the Picklist button. */
+  /* The filled variant only draws a bottom line; add top and right borders
+     in the same color and strength as that line. */
+  border-top: 1px solid rgba(var(--v-theme-on-surface), var(--v-field-border-opacity, 0.38));
+  border-right: 1px solid rgba(var(--v-theme-on-surface), var(--v-field-border-opacity, 0.38));
+  /* Square left corner where it meets the Picklist button; round the outer
+     bottom-right corner to match the button's outer corners. */
   border-top-left-radius: 0;
+  border-bottom-right-radius: 4px;
 }
 
-/* Joined to the field: no gap, rounded only on the outer top-left corner. */
+/* Joined to the field: no gap, rounded only on its outer (left) corners. */
 .picklist-btn {
   height: auto !important;
-  border-radius: 4px 0 0 0;
+  border-radius: 4px 0 0 4px;
+  /* Keep the width the old one-word "Picklist" button had; the longer
+     label wraps onto extra lines instead of widening the button. */
+  width: 106px;
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+/* Vuetify keeps button text on one line; allow wrapping here. */
+.picklist-btn :deep(.v-btn__content) {
+  white-space: normal;
+  line-height: 1.3;
+  text-align: center;
+}
+
+/* buttonPosition="top": button stacked above the field, same width as it. */
+.combo-row--top {
+  flex-direction: column;
+}
+
+.combo-row--top .picklist-btn {
+  width: 100%;
+  height: 40px !important;
+  border-radius: 4px 4px 0 0;
+}
+
+.combo-row--top .tall-combobox :deep(.v-field) {
+  /* Both top corners meet the button now. */
+  border-top-right-radius: 0;
 }
 
 .combo-message {
@@ -417,7 +550,7 @@ defineExpose({ focusFirstError })
   opacity: calc((0.02 + var(--v-focus-opacity) / 2) * var(--v-theme-overlay-multiplier));
 }
 
-/* Red border on chips whose value isn't AA-123-AAA. */
+/* Red border on chips whose value isn't AA-999-AAA. */
 .tall-combobox :deep(.invalid-chip) {
   border: 2px solid rgb(var(--v-theme-error));
 }

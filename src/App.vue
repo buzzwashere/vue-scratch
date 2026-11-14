@@ -1,5 +1,8 @@
 <script setup>
-import { RouterView } from 'vue-router'
+import { RouterView, useRoute } from 'vue-router'
+
+// Routes with meta.wide get a full-width container with slim side padding.
+const route = useRoute()
 </script>
 
 <template>
@@ -11,7 +14,7 @@ import { RouterView } from 'vue-router'
     </v-app-bar>
 
     <v-main>
-      <v-container>
+      <v-container :fluid="!!route.meta.wide" :class="{ 'px-5': route.meta.wide }">
         <RouterView />
       </v-container>
     </v-main>

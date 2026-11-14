@@ -7,6 +7,9 @@ import comboSource from '../components/ComboWithPicker.vue?raw'
 import picklistSource from '../components/Picklist.vue?raw'
 
 const values = ref([])
+
+// Prototype only: stands in for another component handing focus to this one.
+const combo = ref(null)
 const showCode = ref(false)
 
 const headingId = useId()
@@ -41,7 +44,21 @@ const codeId = useId()
     </header>
 
     <div class="pa-4">
-      <ComboWithPicker v-model="values" />
+      <ComboWithPicker ref="combo" v-model="values" />
+
+      <!--
+        Prototype convenience: simulates arriving from another component,
+        which should land on the first chip in error.
+      -->
+      <v-btn
+        class="mt-2"
+        variant="tonal"
+        size="small"
+        prepend-icon="mdi-target"
+        @click="combo?.focusFirstError()"
+      >
+        Focus first error
+      </v-btn>
 
       <p class="text-body-1 mt-2">
         Values: <strong>{{ values.length ? values.join(', ') : 'none' }}</strong>

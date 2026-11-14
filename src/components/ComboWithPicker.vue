@@ -92,7 +92,8 @@ function startEdit(index, { selectAll = false } = {}) {
 }
 
 // Save the edit (Enter or leaving the input). An empty value removes the chip.
-function commitEdit() {
+// e is the blur event when the user tabbed/clicked away.
+function commitEdit(e) {
   if (editingIndex.value === null) return
   if (cancelling) {
     cancelling = false
@@ -101,11 +102,25 @@ function commitEdit() {
   const index = editingIndex.value
   const text = draft.value.trim()
   editingIndex.value = null
+  // Chips are keyed by value, so changing the value rebuilds this chip and
+  // drops focus if it had just moved to the chip's own X (Tab). Note that
+  // case so focus can be put back on the rebuilt chip.
+  const chipEl = e?.target?.closest?.('.v-combobox__selection')
+  const focusStayedInChip = !!chipEl && chipEl.contains(e.relatedTarget)
   const next = [...values.value]
   if (text) next.splice(index, 1, text)
   else next.splice(index, 1)
   values.value = next
   nextTick(() => {
+    if (focusStayedInChip) {
+      const chips = comboRef.value?.$el?.querySelectorAll('.v-combobox__selection') ?? []
+      // Same chip's X, or (if the chip was removed) the next chip's first control.
+      const target = text
+        ? chips[index]?.querySelector('.v-chip__close')
+        : chips[index]?.querySelector('button')
+      if (target) target.focus()
+      else focusMainInput()
+    }
     if (!text) announcement.value = 'Value removed.'
     else if (isValidCode(text)) announcement.value = `Saved ${text}.`
     else announcement.value = `Saved ${text}. Still not in the format AA-123-AAA.`
@@ -197,6 +212,22 @@ function addSelections(codes) {
   const toAdd = codes.filter((code) => !values.value.includes(code))
   values.value = [...values.value, ...toAdd]
 }
+
+// For parent components: jump to the first failing chip, in edit mode with
+// its value selected (same as tabbing onto it). With no failing chips, focus
+// the main input instead. Returns true if a failing chip was found.
+function focusFirstError() {
+  const index = values.value.findIndex((v) => !isValidCode(v))
+  if (index < 0) {
+    focusMainInput()
+    nextTick(() => (announcement.value = 'No values in error.'))
+    return false
+  }
+  startEdit(index, { selectAll: true })
+  return true
+}
+
+defineExpose({ focusFirstError })
 </script>
 
 <template>

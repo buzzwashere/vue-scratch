@@ -45,7 +45,7 @@ const hasInvalid = computed(() => invalidValues.value.length > 0)
 const fieldMessage = computed(() => {
   if (!hasInvalid.value) return 'Format AA-123-AAA. Press Enter to add each value.'
   const list = invalidValues.value.join(', ')
-  return `Values must be in the format AA-123-AAA. Edit or remove: ${list}`
+  return `Values must be in the format AA-123-AAA. Press F2 to edit, or remove: ${list}`
 })
 
 // Id for the message line, which the input points at with aria-describedby.
@@ -62,47 +62,112 @@ watch(values, (now, before = []) => {
   if (parts.length) announcement.value = `${parts.join('. ')}. ${now.length} values.`
 })
 
-// ----- Editing a failing chip -----
-// The combobox, so the input can be focused after a chip is pulled back into it.
+// ----- Editing a failing chip in place -----
+// The combobox component: used to find the inputs inside it and to read
+// which chip the arrow keys have highlighted (selectionIndex).
 const comboRef = ref(null)
 
-// Where the chip being edited sat, so the fixed value goes back in the same spot.
-const editIndex = ref(null)
+// Index of the chip being edited (null when none) and the text being typed.
+const editingIndex = ref(null)
+const draft = ref('')
+// Set when Escape cancels, so the blur that follows doesn't save.
+let cancelling = false
 
-// Pull a failing chip back into the input: remove the chip, put its text in
-// the input, focus it and select the text. Enter (or leaving the field) turns
-// it back into a chip.
-function editChip(index) {
-  const value = values.value[index]
-  editIndex.value = index
-  values.value = values.value.filter((_, i) => i !== index)
-  search.value = String(value)
+// Turn the chip's text into an input, focused with the text selected.
+function startEdit(index) {
+  editingIndex.value = index
+  draft.value = String(values.value[index])
   nextTick(() => {
-    const input = comboRef.value?.$el?.querySelector('input')
+    const input = comboRef.value?.$el?.querySelector('.chip-edit-input')
     input?.focus()
     input?.select()
-    // Runs after the add/remove watcher, so this replaces its "Removed …".
-    announcement.value = `Editing ${value}. Press Enter to save.`
   })
 }
 
-// v-model handler for the combobox. When a value is added while editing,
-// move it from the end back to where the edited chip was.
-function onValuesUpdate(next) {
-  if (editIndex.value !== null && next.length === values.value.length + 1) {
-    const updated = next.slice(0, -1)
-    updated.splice(Math.min(editIndex.value, updated.length), 0, next[next.length - 1])
-    editIndex.value = null
-    values.value = updated
+// Save the edit (Enter or leaving the input). An empty value removes the chip.
+function commitEdit() {
+  if (editingIndex.value === null) return
+  if (cancelling) {
+    cancelling = false
     return
   }
+  const index = editingIndex.value
+  const text = draft.value.trim()
+  editingIndex.value = null
+  const next = [...values.value]
+  if (text) next.splice(index, 1, text)
+  else next.splice(index, 1)
   values.value = next
+  nextTick(() => {
+    if (!text) announcement.value = 'Value removed.'
+    else if (isValidCode(text)) announcement.value = `Saved ${text}.`
+    else announcement.value = `Saved ${text}. Still not in the format AA-123-AAA.`
+  })
 }
 
-// If the edit text is cleared, there's nothing to put back.
-watch(search, (text) => {
-  if (!text) editIndex.value = null
-})
+function cancelEdit() {
+  cancelling = true
+  editingIndex.value = null
+  announcement.value = 'Edit cancelled.'
+  // Removing the input blurs it; the flag stops that blur from saving.
+  nextTick(() => (cancelling = false))
+}
+
+// After Enter or Escape, put focus back in the main input.
+function focusMainInput() {
+  nextTick(() => comboRef.value?.$el?.querySelector('input:not(.chip-edit-input)')?.focus())
+}
+
+// Keys on a failing chip's text button. Handled directly rather than relying
+// on the browser turning Enter/Space into a click, so nothing upstream can
+// swallow it. F2 is the usual "edit this" key.
+function onChipTextKeydown(e, index) {
+  if (['Enter', ' ', 'F2'].includes(e.key)) {
+    e.preventDefault()
+    startEdit(index)
+  }
+}
+
+// Keys in the main input. The combobox lets you move onto chips with the
+// Left/Right arrows (Backspace/Delete then removes the highlighted one).
+// Add: Enter or F2 on a highlighted failing chip edits it, and F2 with no
+// chip highlighted edits the first failing chip.
+function onComboKeydown(e) {
+  if (editingIndex.value !== null) return
+  const selected = comboRef.value?.selectionIndex ?? -1
+  const isEditKey = e.key === 'F2' || (e.key === 'Enter' && selected > -1)
+  if (!isEditKey) return
+  let index = selected
+  if (index < 0) index = values.value.findIndex((v) => !isValidCode(v))
+  if (index < 0 || isValidCode(values.value[index])) return
+  e.preventDefault()
+  startEdit(index)
+}
+
+// Announce the chip the arrow keys land on, since the highlight is only visual.
+watch(
+  () => comboRef.value?.selectionIndex,
+  (index) => {
+    if (index == null || index < 0) return
+    const value = values.value[index]
+    if (value === undefined) return
+    announcement.value = isValidCode(value)
+      ? `${value}. Press Delete to remove.`
+      : `${value}, not in the format AA-123-AAA. Press Enter or F2 to edit, Delete to remove.`
+  },
+)
+
+function onEditKeydown(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    commitEdit()
+    focusMainInput()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelEdit()
+    focusMainInput()
+  }
+}
 
 // Add the codes picked in the dialog as chips, skipping any already in the field.
 function addSelections(codes) {
@@ -146,8 +211,8 @@ function addSelections(codes) {
       -->
       <v-combobox
         ref="comboRef"
-        :model-value="values"
-        @update:model-value="onValuesUpdate"
+        v-model="values"
+        @keydown="onComboKeydown"
         v-model:search="search"
         v-model:focused="focused"
         class="tall-combobox"
@@ -168,9 +233,15 @@ function addSelections(codes) {
           close-label names the value, so the X button reads "Remove AB-123-CDE"
           instead of just "Close".
 
-          Failing chips also get a pencil button, "Edit AB-12", that pulls the
-          value back into the input. keydown.stop is needed because the chip
-          treats Enter/Space on anything inside it as "remove this chip".
+          Failing chips can be edited in place: their text is a button
+          ("Edit AB-12") that swaps to an input inside the chip; click it, or
+          Enter/Space/F2 on it. From the main input, Left/Right arrow onto a
+          failing chip and press Enter or F2, or press F2 to edit the first
+          failing chip. Enter or
+          leaving the input saves, Escape cancels. The input and button stop
+          keydown/mousedown/click from bubbling, because the chip treats
+          Enter/Space as "remove this chip" and the combobox field reacts to
+          keys and clicks as if they were meant for its own input.
         -->
         <template #chip="{ props, item, index }">
           <v-chip
@@ -179,18 +250,31 @@ function addSelections(codes) {
             :prepend-icon="isValidCode(item.title) ? undefined : 'mdi-alert-circle-outline'"
             :close-label="`Remove ${item.title}`"
           >
-            <template v-if="!isValidCode(item.title)" #append>
-              <button
-                type="button"
-                class="chip-edit-btn"
-                :aria-label="`Edit ${item.title}`"
-                :title="`Edit ${item.title}`"
-                @keydown.stop
-                @click.stop="editChip(index)"
-              >
-                <v-icon icon="mdi-pencil" size="x-small" />
-              </button>
-            </template>
+            <input
+              v-if="editingIndex === index"
+              v-model="draft"
+              class="chip-edit-input"
+              :size="Math.max(draft.length, 10)"
+              :aria-label="`Edit value ${item.title}`"
+              :aria-describedby="messageId"
+              @keydown.stop="onEditKeydown"
+              @mousedown.stop
+              @click.stop
+              @blur="commitEdit"
+            />
+            <button
+              v-else-if="!isValidCode(item.title)"
+              type="button"
+              class="chip-text-btn"
+              :aria-label="`Edit ${item.title}, not in the format AA-123-AAA`"
+              title="Click to edit"
+              @keydown.stop="onChipTextKeydown($event, index)"
+              @mousedown.stop
+              @click.stop="startEdit(index)"
+            >
+              {{ item.title }}
+            </button>
+            <template v-else>{{ item.title }}</template>
           </v-chip>
         </template>
 
@@ -295,23 +379,30 @@ function addSelections(codes) {
   border: 0;
 }
 
-/* Pencil button on failing chips, sized like the chip's close button. */
-.chip-edit-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-inline-start: 4px;
-  border-radius: 50%;
-  width: 18px;
-  height: 18px;
+/* The text of a failing chip: a button that looks like text, hinting it's editable. */
+.chip-text-btn {
+  font: inherit;
+  color: inherit;
+  cursor: text;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  border-radius: 2px;
 }
 
-.chip-edit-btn:hover {
-  background: rgba(var(--v-theme-on-surface), 0.08);
-}
-
-.chip-edit-btn:focus-visible {
+.chip-text-btn:focus-visible,
+.chip-edit-input:focus-visible {
   outline: 2px solid rgb(var(--v-theme-primary));
   outline-offset: 1px;
 }
+
+/* Inline input that replaces a chip's text while editing. */
+.chip-edit-input {
+  font: inherit;
+  color: inherit;
+  background: rgb(var(--v-theme-surface));
+  border-radius: 2px;
+  padding: 0 2px;
+  min-width: 0;
+}
+
 </style>

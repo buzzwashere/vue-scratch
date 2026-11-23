@@ -68,6 +68,17 @@ const router = createRouter({
       },
     },
     {
+      path: '/menu-hover-cursor',
+      name: 'menu-hover-cursor',
+      component: () => import('../views/MenuHoverCursor.vue'),
+      meta: {
+        // Full-width page, so the code column has room beside the demo.
+        wide: true,
+        title: 'Menu hover at cursor',
+        description: 'v-menu that opens on hover of a faux link, placed at the mouse pointer',
+      },
+    },
+    {
       path: '/counter',
       name: 'counter',
       component: () => import('../views/CounterView.vue'),
